@@ -249,9 +249,11 @@
     <!-- ---------- SHIFT ---------- -->
     <div class="view" id="view-shift">
         <div class="section-title" data-ar="الشيفت الحالي" data-en="Current Shift">الشيفت الحالي</div>
-        <div class="panel" id="shiftSummary" style="cursor:pointer;" onclick="if(typeof currentShift !== 'undefined' && currentShift) viewShiftDetails(currentShift.id)"></div>
-        <div style="font-size:11px;color:var(--text-dim);text-align:center;margin:4px 0 2px;" data-ar="اضغط لعرض تفاصيل جلسات الشيفت" data-en="Tap to view this shift's session details">اضغط لعرض تفاصيل جلسات الشيفت</div>
-        <button class="btn btn-red btn-block" style="margin-top:14px;" onclick="openCloseShiftSheet()">
+        <div class="panel" id="shiftSummary"></div>
+        <button class="btn btn-ghost btn-block" style="margin-top:14px;" onclick="viewCurrentShiftDetails()">
+            <i class="fa-solid fa-list-check"></i> <span data-ar="بيانات الشيفت" data-en="Shift Details">بيانات الشيفت</span>
+        </button>
+        <button class="btn btn-red btn-block" style="margin-top:10px;" onclick="openCloseShiftSheet()">
             <i class="fa-solid fa-lock"></i> <span data-ar="إقفال الشيفت" data-en="Close Shift">إقفال الشيفت</span>
         </button>
         
@@ -541,21 +543,7 @@
         <div class="sheet">
             <div class="sheet-handle"></div>
             <div class="sheet-title"><span data-ar="تفاصيل الشيفت" data-en="Shift Details">تفاصيل الشيفت</span><button class="close-x" onclick="closeSheet('shiftDetailsOverlay')"><i class="fa-solid fa-xmark"></i></button></div>
-            <button class="btn btn-amber btn-block" style="margin-bottom:14px;" onclick="printCurrentShiftReceipt()">
-                <i class="fa-solid fa-print"></i> <span data-ar="طباعة إيصال الشيفت" data-en="Print Shift Receipt">طباعة إيصال الشيفت</span>
-            </button>
             <div class="panel" id="shiftDetailsSummary" style="margin-bottom:14px;"></div>
-            <div class="section-title" data-ar="جلسات هذا الشيفت" data-en="Sessions in This Shift">جلسات هذا الشيفت</div>
-            <div class="panel" id="shiftDetailsSessionsList" style="margin-bottom:14px;"></div>
-        </div>
-    </div>
-
-    <!-- ============== SESSION DETAIL SHEET ============== -->
-    <div class="overlay" id="sessionDetailOverlay">
-        <div class="sheet">
-            <div class="sheet-handle"></div>
-            <div class="sheet-title"><span id="sessionDetailTitle" data-ar="تفاصيل الجلسة" data-en="Session Details">تفاصيل الجلسة</span><button class="close-x" onclick="closeSheet('sessionDetailOverlay')"><i class="fa-solid fa-xmark"></i></button></div>
-            <div id="sessionDetailBody"></div>
         </div>
     </div>
 
