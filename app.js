@@ -141,16 +141,6 @@ let countdownAlerts = {};
 let categoryToggleState = {};
 
 // ============================================================
-// ✅ حالة "تفاصيل جلسات الشيفت" (Shift Sessions Detail View)
-// دي متغيرات جديدة بس — مبتحذفش ولا بتغيّر أي حاجة من الحالة القديمة فوق
-// ============================================================
-let currentShiftDetailShift = null;      // الشيفت المعروض حالياً في شاشة التفاصيل
-let currentShiftDetailTotals = null;     // نتيجة getShiftTotals لنفس الشيفت (بتتحسب مرة واحدة ونعيد استخدامها في الطباعة)
-let currentShiftDetailSessions = [];     // كل الجلسات (completed) اللي حصلت في نطاق الشيفت ده
-let currentSessionDetailIndex = -1;      // انديكس الجلسة المفتوحة حالياً داخل currentShiftDetailSessions
-let currentSessionDetailData = null;     // { session, segments, orders, prepayments } للجلسة المفتوحة حالياً
-
-// ============================================================
 // ✅ TOGGLE PIN SECTION (قابل للطي)
 // ============================================================
 let settingsPinExpanded = false;
@@ -214,17 +204,6 @@ function closeSheet(id) {
     }
     if (id === 'transferOverlay') {
         transferSourceStationId = null;
-    }
-    // ✅ لما شاشة تفاصيل الجلسة تتقفل، نصفّر حالتها عشان أول ما تتفتح تاني تبدأ نضيفة
-    if (id === 'sessionDetailOverlay') {
-        currentSessionDetailData = null;
-    }
-    // ✅ لما شاشة تفاصيل الشيفت تتقفل بالكامل، نصفّر حالتها هي كمان
-    if (id === 'shiftDetailsOverlay') {
-        currentShiftDetailShift = null;
-        currentShiftDetailTotals = null;
-        currentShiftDetailSessions = [];
-        currentSessionDetailIndex = -1;
     }
 }
 function t(ar, en) { return currentLang === 'ar' ? ar : en; }
@@ -3818,499 +3797,101 @@ async function viewShiftDetails(shiftId) {
         <div class="list-row"><div class="row-title">${t('وقت الفتح', 'Opened At')}</div><div class="row-value mono">${openedStr}</div></div>
         <div class="list-row"><div class="row-title">${t('وقت الإقفال', 'Closed At')}</div><div class="row-value mono">${closedStr}</div></div>`;
     document.getElementById('shiftDetailsSummary').innerHTML = buildShiftBreakdownHtml(totals, extraRows);
-
-    // ✅ نخزن الشيفت والتوتالز الحاليين عشان نستخدمهم في طباعة إيصال الشيفت
-    // ونصفّر أي جلسة كانت متفتحة قبل كده في شاشة تفاصيل الجلسة
-    currentShiftDetailShift = shift;
-    currentShiftDetailTotals = totals;
-    currentSessionDetailIndex = -1;
-    currentSessionDetailData = null;
-
-    const sessListEl = document.getElementById('shiftDetailsSessionsList');
-    if (sessListEl) {
-        sessListEl.innerHTML = `<div class="empty" style="padding:14px 0;"><i class="fa-solid fa-spinner fa-spin"></i></div>`;
-    }
     openSheet('shiftDetailsOverlay');
-
-    currentShiftDetailSessions = await loadShiftSessionsForRange(shift);
-    renderShiftDetailSessionsList();
 }
 
 // ============================================================
-// ✅ SHIFT SESSIONS DETAIL VIEW — جلب كل الجلسات المكتملة في نطاق شيفت معين
-// نفس نطاق التاريخ المستخدم بالظبط في getShiftTotals (opened_at → closed_at أو الآن لو لسه مفتوح)
+// ✅ بيانات الشيفت الحالي (Read-Only) — بتعرض ملخص الشيفت المفتوح
+// حالياً بنفس تنسيق مودال تفاصيل الشيفتات المقفولة (shiftDetailsOverlay)،
+// وبتضيف قايمة بالأجهزة الشغالة دلوقتي وتفاصيلها (وقت التشغيل، الطلبات،
+// والتقدير الحالي). الزر ده للعرض فقط ولا يقفل أي جلسة ولا يعدل أي بيانات.
 // ============================================================
-async function loadShiftSessionsForRange(shift) {
-    try {
-        const { data, error } = await supabaseClient
-            .from('sessions')
-            .select('*')
-            .eq('business_id', business.id)
-            .eq('status', 'completed')
-            .gte('ended_at', shift.opened_at)
-            .lte('ended_at', shift.closed_at || new Date().toISOString())
-            .order('ended_at', { ascending: true });
-        if (error) throw error;
-        return data || [];
-    } catch (e) {
-        console.error('Error loading shift sessions:', e);
-        return [];
-    }
-}
-
-// ============================================================
-// ✅ عرض قائمة جلسات الشيفت داخل شاشة تفاصيل الشيفت
-// كل صف بيمثل جلسة واحدة، والضغط عليه بيفتح ملخص الجلسة الكامل
-// ============================================================
-function renderShiftDetailSessionsList() {
-    const el = document.getElementById('shiftDetailsSessionsList');
-    if (!el) return;
-
-    if (!currentShiftDetailSessions || currentShiftDetailSessions.length === 0) {
-        el.innerHTML = `<div class="empty" style="padding:14px 0;"><i class="fa-solid fa-gamepad"></i>${t('لا يوجد جلسات في هذا الشيفت', 'No sessions in this shift')}</div>`;
+async function viewCurrentShiftDetails() {
+    if (!currentShift) {
+        showToast(t('لا يوجد شيفت مفتوح', 'No open shift'), 'warning');
         return;
     }
+    const totals = await getShiftTotals(currentShift);
+    const openedStr = new Date(currentShift.opened_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US');
+    const activeDevicesHtml = await buildActiveDevicesDetailsHtml();
+    const extraRows = `
+        <div class="list-row"><div class="row-title">${t('وقت الفتح', 'Opened At')}</div><div class="row-value mono">${openedStr}</div></div>
+        <div class="list-row"><div class="row-title">${t('أجهزة لسه شغالة', 'Active Devices')}</div><div class="row-value mono">${Object.keys(sessions).length}</div></div>`;
+    document.getElementById('shiftDetailsSummary').innerHTML = buildShiftBreakdownHtml(totals, extraRows) + activeDevicesHtml;
+    openSheet('shiftDetailsOverlay');
+}
 
-    let html = '';
-    currentShiftDetailSessions.forEach((s, idx) => {
-        const station = stations.find(st => st.id === s.station_id);
-        const deviceName = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز محذوف', 'Deleted device');
-        const startStr = s.started_at ? new Date(s.started_at).toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
-        const endStr = s.ended_at ? new Date(s.ended_at).toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' }) : '—';
-        const durMins = (s.started_at && s.ended_at) ? Math.max(0, Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000)) : 0;
+// بناء قسم "الأجهزة الشغالة دلوقتي" — بيانات قراءة فقط من الـ state الحالي
+// (sessions/stations) بدون أي استعلام كتابة أو تعديل على قاعدة البيانات
+async function buildActiveDevicesDetailsHtml() {
+    const stationIds = Object.keys(sessions);
+    const sectionTitle = `<div class="section-title" style="margin:14px 0 6px;">${t('الأجهزة الشغالة دلوقتي', 'Currently Active Devices')}</div>`;
+
+    if (stationIds.length === 0) {
+        return `${sectionTitle}<div class="empty" style="padding:10px 0;">${t('لا يوجد أجهزة شغالة حالياً', 'No active devices right now')}</div>`;
+    }
+
+    // ✅ جلب طلبات المنيو الخاصة بكل الجلسات الشغالة دفعة واحدة (قراءة فقط)
+    const sessionIds = stationIds.map(id => sessions[id] && sessions[id].id).filter(Boolean);
+    const ordersBySession = {};
+    if (sessionIds.length > 0) {
+        try {
+            const { data: orderRows } = await supabaseClient
+                .from('session_orders')
+                .select('session_id, item_name, quantity, unit_price')
+                .in('session_id', sessionIds);
+            (orderRows || []).forEach(o => {
+                if (!ordersBySession[o.session_id]) ordersBySession[o.session_id] = [];
+                ordersBySession[o.session_id].push(o);
+            });
+        } catch (e) {
+            console.warn('Error loading active session orders for shift details:', e);
+        }
+    }
+
+    let html = sectionTitle;
+    stationIds.forEach(stationId => {
+        const session = sessions[stationId];
+        if (!session) return;
+
+        const station = stations.find(s => s.id === stationId);
+        const deviceName = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز', 'Device');
+        const activeSeg = getActiveSegmentFast(session.id);
+        const startedStr = activeSeg ? new Date(activeSeg.started_at).toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—';
+
+        let timeInfo = '—';
+        if (activeSeg && activeSeg.timer_type === 'countdown') {
+            timeInfo = `${t('متبقي', 'Remaining')}: ${formatCountdown(getRemainingSeconds(activeSeg))}`;
+        } else if (activeSeg) {
+            const elapsedSeconds = Math.max(0, (new Date(nowCorrected()) - new Date(activeSeg.started_at)) / 1000);
+            timeInfo = `${t('منقضي', 'Elapsed')}: ${formatCountdown(elapsedSeconds)}`;
+        }
+
+        const estimate = computeSegmentEstimate(activeSeg);
+        const orders = ordersBySession[session.id] || [];
+        const ordersHtml = orders.length
+            ? orders.map(o => `
+                <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:var(--text-dim);">
+                    <span>${escapeHtml(o.item_name)} × ${o.quantity}</span>
+                    <span class="mono">${money(Number(o.quantity || 0) * Number(o.unit_price || 0))}</span>
+                </div>`).join('')
+            : `<div style="font-size:12px;color:var(--text-faint);padding:2px 0;">${t('لا يوجد طلبات منيو', 'No menu orders')}</div>`;
 
         html += `
-        <div class="list-row" style="flex-direction:column;align-items:stretch;cursor:pointer;" onclick="openSessionDetailModal(${idx})">
-            <div style="display:flex;justify-content:space-between;width:100%;">
-                <div class="row-title" style="font-size:13.5px;"><i class="fa-solid fa-gamepad" style="color:var(--teal);margin-left:6px;"></i>${escapeHtml(deviceName)}</div>
-                <div class="row-value mono" style="color:var(--amber);">${moneyDec(s.amount)} ${t('ج', 'EGP')}</div>
-            </div>
-            <div style="display:flex;justify-content:space-between;width:100%;margin-top:4px;">
-                <div style="font-size:11.5px;color:var(--text-dim);">${startStr} → ${endStr} (${durMins} ${t('د', 'min')})</div>
-                <i class="fa-solid fa-chevron-left" style="color:var(--text-faint);font-size:11px;"></i>
-            </div>
-        </div>`;
+            <div class="list-row" style="flex-direction:column;align-items:stretch;padding:10px 4px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;justify-content:space-between;width:100%;margin-bottom:4px;">
+                    <div class="row-title" style="font-weight:700;">${escapeHtml(deviceName)}</div>
+                    <div class="row-value mono" style="font-size:12px;color:var(--text-dim);">${t('بدأ الساعة', 'Started')} ${startedStr}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;width:100%;font-size:12px;color:var(--text-dim);margin-bottom:6px;">
+                    <span>${timeInfo}</span>
+                    <span class="mono">${t('التقدير الحالي', 'Current Estimate')}: ${money(estimate.amount)}</span>
+                </div>
+                ${ordersHtml}
+            </div>`;
     });
-    el.innerHTML = html;
-}
 
-// ============================================================
-// ✅ فتح ملخص جلسة واحدة كاملة (segments + orders + prepayments)
-// ============================================================
-async function openSessionDetailModal(index) {
-    const session = currentShiftDetailSessions[index];
-    if (!session) return;
-    currentSessionDetailIndex = index;
-
-    const body = document.getElementById('sessionDetailBody');
-    if (body) body.innerHTML = `<div class="empty" style="padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i></div>`;
-    openSheet('sessionDetailOverlay');
-
-    try {
-        const [{ data: segments }, { data: orders }, { data: prepayments }] = await Promise.all([
-            supabaseClient.from('session_segments').select('*').eq('session_id', session.id).order('started_at', { ascending: true }),
-            supabaseClient.from('session_orders').select('*').eq('session_id', session.id).order('created_at', { ascending: true }),
-            supabaseClient.from('session_prepayments').select('*').eq('session_id', session.id).order('created_at', { ascending: true })
-        ]);
-
-        currentSessionDetailData = { session, segments: segments || [], orders: orders || [], prepayments: prepayments || [] };
-        renderSessionDetailModal();
-    } catch (e) {
-        console.error('Error loading session detail:', e);
-        if (body) body.innerHTML = `<div class="empty" style="padding:20px;">${t('تعذر تحميل تفاصيل الجلسة', 'Could not load session details')}</div>`;
-    }
-}
-
-// ============================================================
-// ✅ التنقل بين الجلسات: بين كل الجلسات ('all') أو بين جلسات نفس الجهاز فقط ('device')
-// ============================================================
-function navigateSessionDetail(scope, direction) {
-    if (!currentShiftDetailSessions || currentShiftDetailSessions.length === 0) return;
-    if (currentSessionDetailIndex < 0) return;
-
-    if (scope === 'all') {
-        const newIndex = currentSessionDetailIndex + direction;
-        if (newIndex < 0 || newIndex >= currentShiftDetailSessions.length) return;
-        openSessionDetailModal(newIndex);
-    } else if (scope === 'device') {
-        const currentSession = currentShiftDetailSessions[currentSessionDetailIndex];
-        if (!currentSession) return;
-        const sameDeviceIndices = currentShiftDetailSessions
-            .map((s, i) => ({ s, i }))
-            .filter(x => x.s.station_id === currentSession.station_id)
-            .map(x => x.i);
-        const pos = sameDeviceIndices.indexOf(currentSessionDetailIndex);
-        const newPos = pos + direction;
-        if (newPos < 0 || newPos >= sameDeviceIndices.length) return;
-        openSessionDetailModal(sameDeviceIndices[newPos]);
-    }
-}
-
-// ============================================================
-// ✅ رسم شاشة تفاصيل الجلسة الكاملة (الأجزاء / الطلبات / الدفعات المقدمة / الدفع النهائي)
-// ============================================================
-function renderSessionDetailModal() {
-    if (!currentSessionDetailData) return;
-    const { session, segments, orders, prepayments } = currentSessionDetailData;
-    const station = stations.find(st => st.id === session.station_id);
-    const deviceName = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز محذوف', 'Deleted device');
-
-    const titleEl = document.getElementById('sessionDetailTitle');
-    if (titleEl) titleEl.textContent = deviceName;
-
-    const startedStr = session.started_at ? new Date(session.started_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—';
-    const endedStr = session.ended_at ? new Date(session.ended_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—';
-    const totalMins = (session.started_at && session.ended_at) ? Math.max(0, Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 60000)) : 0;
-    const totalDurationLabel = totalMins >= 60
-        ? `${Math.floor(totalMins / 60)} ${t('ساعة', 'hr')} ${totalMins % 60} ${t('د', 'min')}`
-        : `${totalMins} ${t('د', 'min')}`;
-
-    let singleTotal = 0, multiTotal = 0;
-    const segmentsHtml = segments.filter(s => s.ended_at).map(s => {
-        const segStart = new Date(s.started_at), segEnd = new Date(s.ended_at);
-        const mins = Math.round((segEnd - segStart) / 60000);
-        const amt = (s.amount !== null && s.amount !== undefined) ? Number(s.amount) : calculateSegmentAmountFromTimes(s.started_at, s.ended_at, s.rate);
-        if (s.mode === 'single') singleTotal += amt; else multiTotal += amt;
-        const modeClass = s.mode === 'single' ? 'seg-mode-single' : 'seg-mode-multi';
-        const modeLabel = s.mode === 'single' ? t('Single', 'Single') : t('Multi', 'Multi');
-        const timerIcon = (s.timer_type || 'countup') === 'countdown' ? '⬇️' : '⬆️';
-        const timeRange = `${segStart.toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' })} - ${segEnd.toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' })}`;
-        return `<div class="segment-row"><span class="seg-label"><span class="${modeClass}">●</span> ${modeLabel} ${timeRange} (${mins}${t('د', 'min')}) ${timerIcon} @ ${money(s.rate)}</span><span class="seg-value ${modeClass}">${moneyDec(amt)}</span></div>`;
-    }).join('');
-
-    const ordersTotal = orders.reduce((sum, o) => sum + (Number(o.quantity) * Number(o.unit_price)), 0);
-    const ordersHtml = orders.length ? orders.map(o => `
-        <div class="list-row" style="padding:8px 4px;">
-            <div><div class="row-title" style="font-size:13px;">${escapeHtml(o.item_name)}</div><div class="row-sub">${t('الكمية', 'Qty')}: ${o.quantity} × ${moneyDec(o.unit_price)}</div></div>
-            <div class="row-value mono">${moneyDec(o.quantity * o.unit_price)}</div>
-        </div>`).join('') : `<div class="empty" style="padding:10px 0;">${t('لا يوجد طلبات', 'No orders')}</div>`;
-
-    const prepaidTotal = prepayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const prepayHtml = prepayments.length ? prepayments.map(p => `
-        <div class="list-row" style="padding:6px 4px;">
-            <div><div class="row-title" style="font-size:13px;">${p.note ? escapeHtml(p.note) : t('دفعة مقدمة', 'Prepayment')}</div><div class="row-sub">${new Date(p.created_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US')}</div></div>
-            <div class="row-value mono" style="color:var(--teal);">${moneyDec(p.amount)}</div>
-        </div>`).join('') : '';
-
-    const pm = paymentMethods.find(p => p.id === session.payment_method);
-    const discountVal = Number(session.discount || 0);
-    const amountPaidVal = (session.amount_paid !== null && session.amount_paid !== undefined) ? Number(session.amount_paid) : null;
-    const finalTotal = Number(session.amount || 0);
-
-    const sameDeviceIndices = currentShiftDetailSessions
-        .map((s, i) => ({ s, i }))
-        .filter(x => x.s.station_id === session.station_id)
-        .map(x => x.i);
-    const posInDevice = sameDeviceIndices.indexOf(currentSessionDetailIndex);
-    const hasPrevAll = currentSessionDetailIndex > 0;
-    const hasNextAll = currentSessionDetailIndex < currentShiftDetailSessions.length - 1;
-    const hasPrevDevice = posInDevice > 0;
-    const hasNextDevice = posInDevice < sameDeviceIndices.length - 1;
-
-    const body = document.getElementById('sessionDetailBody');
-    if (!body) return;
-    body.innerHTML = `
-        <div style="display:flex;justify-content:space-between;gap:6px;margin-bottom:10px;">
-            <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="navigateSessionDetail('all',-1)" ${hasPrevAll ? '' : 'disabled'}><i class="fa-solid fa-angles-right"></i> ${t('الجلسة السابقة', 'Prev Session')}</button>
-            <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="navigateSessionDetail('all',1)" ${hasNextAll ? '' : 'disabled'}>${t('الجلسة التالية', 'Next Session')} <i class="fa-solid fa-angles-left"></i></button>
-        </div>
-        <div style="display:flex;justify-content:space-between;gap:6px;margin-bottom:14px;">
-            <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="navigateSessionDetail('device',-1)" ${hasPrevDevice ? '' : 'disabled'}><i class="fa-solid fa-chevron-right"></i> ${t('نفس الجهاز - سابق', 'Same Device - Prev')}</button>
-            <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="navigateSessionDetail('device',1)" ${hasNextDevice ? '' : 'disabled'}>${t('نفس الجهاز - تالي', 'Same Device - Next')} <i class="fa-solid fa-chevron-left"></i></button>
-        </div>
-
-        <div class="panel" style="margin-bottom:12px;">
-            <div class="list-row"><div class="row-title">${t('بداية الجلسة', 'Started At')}</div><div class="row-value mono" style="font-size:12.5px;">${startedStr}</div></div>
-            <div class="list-row"><div class="row-title">${t('نهاية الجلسة', 'Ended At')}</div><div class="row-value mono" style="font-size:12.5px;">${endedStr}</div></div>
-            <div class="list-row"><div class="row-title">${t('إجمالي المدة', 'Total Duration')}</div><div class="row-value mono">${totalDurationLabel}</div></div>
-        </div>
-
-        ${segmentsHtml ? `
-        <div class="section-title">${t('تفاصيل الأجزاء (Single / Multi)', 'Segment Details (Single / Multi)')}</div>
-        <div class="segment-breakdown" style="margin-bottom:12px;">
-            ${segmentsHtml}
-            <div class="segment-divider"></div>
-            <div class="segment-row"><span class="seg-label">${t('إجمالي Single', 'Single Total')}</span><span class="seg-value seg-mode-single">${moneyDec(singleTotal)}</span></div>
-            <div class="segment-row"><span class="seg-label">${t('إجمالي Multi', 'Multi Total')}</span><span class="seg-value seg-mode-multi">${moneyDec(multiTotal)}</span></div>
-        </div>` : ''}
-
-        <div class="section-title">${t('الطلبات والمشروبات', 'Orders & Drinks')}</div>
-        <div class="panel" style="margin-bottom:12px;">
-            ${ordersHtml}
-            ${orders.length ? `<div class="list-row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:8px;"><div class="row-title">${t('إجمالي الطلبات', 'Orders Total')}</div><div class="row-value mono">${moneyDec(ordersTotal)}</div></div>` : ''}
-        </div>
-
-        ${prepayments.length ? `
-        <div class="section-title">${t('الدفعات المقدمة', 'Prepayments')}</div>
-        <div class="panel" style="margin-bottom:12px;">
-            ${prepayHtml}
-            <div class="list-row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:8px;"><div class="row-title">${t('إجمالي الدفعات المقدمة', 'Total Prepaid')}</div><div class="row-value mono" style="color:var(--teal);">${moneyDec(prepaidTotal)}</div></div>
-        </div>` : ''}
-
-        <div class="panel" style="margin-bottom:12px;">
-            ${discountVal > 0 ? `<div class="list-row"><div class="row-title">${t('الخصم', 'Discount')}</div><div class="row-value mono" style="color:#ff6b6b;">- ${moneyDec(discountVal)}</div></div>` : ''}
-            ${amountPaidVal !== null ? `<div class="list-row"><div class="row-title">${t('المبلغ المدفوع', 'Amount Paid')}</div><div class="row-value mono">${moneyDec(amountPaidVal)}</div></div>` : ''}
-            <div class="list-row"><div class="row-title">${t('طريقة الدفع', 'Payment Method')}</div><div class="row-value">${pm ? escapeHtml(pm.name) : t('غير محدد', 'Not set')}</div></div>
-            <div class="list-row"><div class="row-title" style="font-weight:700;">${t('الإجمالي النهائي', 'Final Total')}</div><div class="row-value mono" style="color:var(--amber);font-size:16px;">${moneyDec(finalTotal)}</div></div>
-        </div>
-
-        <button class="btn btn-teal btn-block" onclick="printHistoricSessionReceipt()"><i class="fa-solid fa-print"></i> ${t('طباعة إيصال الجلسة', 'Print Session Receipt')}</button>
-    `;
-}
-
-// ============================================================
-// ✅ نافذة طباعة مشتركة (تُستخدم لإيصال الجلسة وإيصال الشيفت الكامل)
-// ============================================================
-function openReceiptPrintWindow(contentHtml, titleText) {
-    const printWindow = window.open('', '_blank', 'width=400,height=600');
-    if (!printWindow) {
-        showToast(t('الرجاء السماح للنوافذ المنبثقة', 'Please allow popups'), 'error');
-        return;
-    }
-
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>${titleText}</title>
-            <meta charset="UTF-8">
-            <style>
-                @page { margin: 10px; size: auto; }
-                body { font-family: 'Cairo', Arial, sans-serif; margin: 0; padding: 0; background: #fff; }
-                @media print {
-                    body { background: #fff; }
-                    .no-print { display: none; }
-                }
-            </style>
-        </head>
-        <body>
-            ${contentHtml}
-            <div style="text-align:center;margin-top:12px;" class="no-print">
-                <button onclick="window.print()" style="padding:10px 30px;background:#ff8a1e;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;">
-                    🖨️ ${t('طباعة', 'Print')}
-                </button>
-                <button onclick="window.close()" style="padding:10px 30px;background:#666;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-right:8px;">
-                    ✕ ${t('إغلاق', 'Close')}
-                </button>
-            </div>
-            <script>
-                setTimeout(() => { window.print(); }, 500);
-            <\/script>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-}
-
-// ============================================================
-// ✅ طباعة إيصال جلسة واحدة من داخل سجل الشيفت (Historic Session Receipt)
-// مبنية على البيانات المخزنة في currentSessionDetailData — مستقلة تماماً
-// عن متغيرات إنهاء الجلسة الحية (endSessionDiscount... إلخ) عشان تشتغل صح
-// حتى لو الجلسة دي اتقفلت من زمان.
-// ============================================================
-function printHistoricSessionReceipt() {
-    if (!currentSessionDetailData) {
-        showToast(t('جاري تحميل بيانات الجلسة...', 'Loading session data...'), 'warning');
-        return;
-    }
-    const { session, segments, orders, prepayments } = currentSessionDetailData;
-    const station = stations.find(st => st.id === session.station_id);
-    const deviceName = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز محذوف', 'Deleted device');
-    const pm = paymentMethods.find(p => p.id === session.payment_method);
-
-    let singleTotal = 0, multiTotal = 0;
-    segments.filter(s => s.ended_at).forEach(s => {
-        const amt = (s.amount !== null && s.amount !== undefined) ? Number(s.amount) : calculateSegmentAmountFromTimes(s.started_at, s.ended_at, s.rate);
-        if (s.mode === 'single') singleTotal += amt; else multiTotal += amt;
-    });
-    const ordersTotal = orders.reduce((sum, o) => sum + (Number(o.quantity) * Number(o.unit_price)), 0);
-    const prepaidTotal = prepayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const discountVal = Number(session.discount || 0);
-    const finalTotal = Number(session.amount || 0);
-
-    let ordersReceiptHtml = '';
-    if (orders.length > 0) {
-        ordersReceiptHtml = `
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px;">
-                <div style="font-weight:700;margin-bottom:4px;">${t('الطلبات', 'Orders')}</div>
-                ${orders.map(o => `
-                    <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
-                        <span>${escapeHtml(o.item_name)} × ${o.quantity}</span>
-                        <span>${moneyDec(o.quantity * o.unit_price)} ${t('ج', 'EGP')}</span>
-                    </div>
-                `).join('')}
-                <div style="display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-weight:600;">
-                    <span>${t('إجمالي الطلبات', 'Orders Total')}</span>
-                    <span>${moneyDec(ordersTotal)} ${t('ج', 'EGP')}</span>
-                </div>
-            </div>
-        `;
-    }
-
-    let prepayReceiptHtml = '';
-    if (prepayments.length > 0) {
-        prepayReceiptHtml = `
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px;">
-                <div style="display:flex;justify-content:space-between;padding:3px 0;font-weight:600;">
-                    <span>${t('مدفوع مقدماً', 'Prepaid')}</span>
-                    <span>${moneyDec(prepaidTotal)} ${t('ج', 'EGP')}</span>
-                </div>
-            </div>
-        `;
-    }
-
-    const receiptContent = `
-        <div style="font-family: 'Cairo', Arial, sans-serif; padding: 20px; max-width: 300px; margin: 0 auto; direction: rtl; text-align: center; background: #fff; color: #000;">
-            <div style="font-size: 18px; font-weight: 700; margin-bottom: 4px;">${escapeHtml(business.name)}</div>
-            <div style="font-size: 12px; color: #666; margin-bottom: 12px;">${escapeHtml(business.code)}</div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px;">
-                <div style="display:flex;justify-content:space-between;padding:3px 0;">
-                    <span>${t('الجهاز', 'Device')}</span>
-                    <span>${escapeHtml(deviceName)}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:3px 0;">
-                    <span>${t('بداية الجلسة', 'Started')}</span>
-                    <span>${session.started_at ? new Date(session.started_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—'}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:3px 0;">
-                    <span>${t('نهاية الجلسة', 'Ended')}</span>
-                    <span>${session.ended_at ? new Date(session.ended_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—'}</span>
-                </div>
-            </div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px;">
-                ${singleTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${t('Single', 'Single')}</span><span>${moneyDec(singleTotal)} ${t('ج', 'EGP')}</span></div>` : ''}
-                ${multiTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${t('Multi', 'Multi')}</span><span>${moneyDec(multiTotal)} ${t('ج', 'EGP')}</span></div>` : ''}
-            </div>
-            ${ordersReceiptHtml}
-            ${prepayReceiptHtml}
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            ${discountVal > 0 ? `
-            <div style="font-size: 13px; margin-bottom: 4px;">
-                <div style="display:flex;justify-content:space-between;padding:2px 0;color:#c0392b;">
-                    <span>${t('الخصم', 'Discount')}</span>
-                    <span>- ${moneyDec(discountVal)} ${t('ج', 'EGP')}</span>
-                </div>
-            </div>
-            ` : ''}
-            <div style="font-size: 18px; font-weight: 700; color: #000; margin: 8px 0;">
-                <div style="display:flex;justify-content:space-between;">
-                    <span>${t('الإجمالي', 'Total')}</span>
-                    <span>${moneyDec(finalTotal)} ${t('ج', 'EGP')}</span>
-                </div>
-            </div>
-            <div style="font-size: 13px; margin: 8px 0;">
-                <div style="display:flex;justify-content:space-between;padding:2px 0;">
-                    <span>${t('طريقة الدفع', 'Payment Method')}</span>
-                    <span>${pm ? escapeHtml(pm.name) : t('غير محدد', 'Not set')}</span>
-                </div>
-            </div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 11px; color: #999; margin-top: 8px;">
-                ${t('شكراً لزيارتكم', 'Thank you for your visit')}
-            </div>
-            <div style="font-size: 10px; color: #aaa; margin-top: 4px;">
-                ${t('تاريخ الطباعة', 'Printed on')}: ${new Date().toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US')}
-            </div>
-        </div>
-    `;
-
-    openReceiptPrintWindow(receiptContent, t('إيصال الجلسة', 'Session Receipt'));
-}
-
-// ============================================================
-// ✅ طباعة إيصال الشيفت الكامل (Full Shift Summary Receipt)
-// مبنية على currentShiftDetailShift / currentShiftDetailTotals / currentShiftDetailSessions
-// اللي بيتحطوا لما تتفتح شاشة تفاصيل الشيفت (viewShiftDetails)
-// ============================================================
-function printCurrentShiftReceipt() {
-    if (!currentShiftDetailShift || !currentShiftDetailTotals) {
-        showToast(t('جاري تحميل بيانات الشيفت...', 'Loading shift data...'), 'warning');
-        return;
-    }
-    const shift = currentShiftDetailShift;
-    const totals = currentShiftDetailTotals;
-    const shiftSessions = currentShiftDetailSessions || [];
-
-    const openedStr = new Date(shift.opened_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US');
-    const closedStr = shift.closed_at ? new Date(shift.closed_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : t('لا يزال مفتوحاً', 'Still open');
-    const closedBy = shift.closed_by || (currentUser ? (currentUser.name || currentUser.type) : null) || t('غير معروف', 'Unknown');
-
-    const totalDiscounts = shiftSessions.reduce((sum, s) => sum + Number(s.discount || 0), 0);
-
-    const deviceBreakdown = {};
-    shiftSessions.forEach(s => {
-        const station = stations.find(st => st.id === s.station_id);
-        const name = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز محذوف', 'Deleted device');
-        if (!deviceBreakdown[name]) deviceBreakdown[name] = { count: 0, total: 0 };
-        deviceBreakdown[name].count += 1;
-        deviceBreakdown[name].total += Number(s.amount || 0);
-    });
-    const deviceBreakdownHtml = Object.entries(deviceBreakdown).map(([name, d]) => `
-        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
-            <span>${escapeHtml(name)} (${d.count} ${t('جلسة', 'sessions')})</span><span>${moneyDec(d.total)} ${t('ج', 'EGP')}</span>
-        </div>`).join('');
-
-    const itemEntries = Object.entries(totals.itemBreakdown || {});
-    const itemsHtml = itemEntries.length
-        ? itemEntries.map(([name, amt]) => `
-            <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
-                <span>${escapeHtml(name)}</span><span>${moneyDec(amt)} ${t('ج', 'EGP')}</span>
-            </div>`).join('')
-        : `<div style="font-size:12px;color:#999;">${t('لا يوجد', 'None')}</div>`;
-
-    const expensesHtml = (totals.expenseRows || []).length
-        ? totals.expenseRows.map(e => `
-            <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
-                <span>${escapeHtml(e.description)}</span><span>${moneyDec(e.amount)} ${t('ج', 'EGP')}</span>
-            </div>`).join('')
-        : `<div style="font-size:12px;color:#999;">${t('لا يوجد', 'None')}</div>`;
-
-    const receiptContent = `
-        <div style="font-family: 'Cairo', Arial, sans-serif; padding: 20px; max-width: 320px; margin: 0 auto; direction: rtl; text-align: center; background: #fff; color: #000;">
-            <div style="font-size: 18px; font-weight: 700; margin-bottom: 4px;">${escapeHtml(business.name)}</div>
-            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">${escapeHtml(business.code)}</div>
-            <div style="font-size: 14px; font-weight:700; margin-bottom: 12px;">${t('إيصال إقفال شيفت', 'Shift Closing Receipt')}</div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px; text-align:right;">
-                <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${t('وقت الفتح', 'Opened At')}</span><span>${openedStr}</span></div>
-                <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${t('وقت الإقفال', 'Closed At')}</span><span>${closedStr}</span></div>
-                <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${t('الموظف', 'Employee')}</span><span>${escapeHtml(closedBy)}</span></div>
-                <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${t('عدد الجلسات', 'Sessions Count')}</span><span>${shiftSessions.length}</span></div>
-            </div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size:13px;font-weight:700;margin-bottom:4px;text-align:right;">${t('توزيع الجلسات حسب الجهاز', 'Sessions by Device')}</div>
-            <div style="text-align:right;margin-bottom:8px;">${deviceBreakdownHtml || `<div style="font-size:12px;color:#999;">${t('لا يوجد', 'None')}</div>`}</div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 13px; margin-bottom: 8px; text-align:right;">
-                <div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${t('إيراد الساعات', 'Hours Revenue')}</span><span>${moneyDec(totals.hoursRevenue)} ${t('ج', 'EGP')}</span></div>
-                <div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${t('إيراد المنيو', 'Menu Revenue')}</span><span>${moneyDec(totals.itemsRevenue)} ${t('ج', 'EGP')}</span></div>
-            </div>
-            <div style="font-size:13px;font-weight:700;margin-bottom:4px;text-align:right;">${t('إيراد المنيو حسب الصنف', 'Menu Revenue by Item')}</div>
-            <div style="text-align:right;margin-bottom:8px;">${itemsHtml}</div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            ${totalDiscounts > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:13px;color:#c0392b;"><span>${t('إجمالي الخصومات', 'Total Discounts')}</span><span>- ${moneyDec(totalDiscounts)} ${t('ج', 'EGP')}</span></div>` : ''}
-            <div style="font-size:13px;font-weight:700;margin-bottom:4px;text-align:right;margin-top:8px;">${t('المصروفات', 'Expenses')}</div>
-            <div style="text-align:right;margin-bottom:8px;">${expensesHtml}</div>
-            <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:13px;font-weight:700;"><span>${t('إجمالي المصروفات', 'Total Expenses')}</span><span>${moneyDec(totals.expenses)} ${t('ج', 'EGP')}</span></div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 20px; font-weight: 700; color: #000; margin: 8px 0;">
-                <div style="display:flex;justify-content:space-between;">
-                    <span>${t('صافي الإيراد', 'Net Revenue')}</span>
-                    <span>${moneyDec(totals.profit)} ${t('ج', 'EGP')}</span>
-                </div>
-            </div>
-            <hr style="border: none; border-top: 1px dashed #ccc; margin: 10px 0;">
-            <div style="font-size: 10px; color: #aaa; margin-top: 4px;">
-                ${t('تاريخ الطباعة', 'Printed on')}: ${new Date().toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US')}
-            </div>
-        </div>
-    `;
-
-    openReceiptPrintWindow(receiptContent, t('إيصال الشيفت', 'Shift Receipt'));
+    return html;
 }
 
 async function confirmCloseShift() {
