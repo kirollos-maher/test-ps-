@@ -3497,7 +3497,7 @@ async function getShiftTotals(shift) {
         const [{ data: sessRows }, { data: expRows }] = await Promise.all([
             supabaseClient
                 .from('sessions')
-                .select('id, amount, payment_method')
+                .select('id, amount, payment_method, station_id, started_at, ended_at')
                 .eq('business_id', business.id)
                 .eq('status', 'completed')
                 .gte('ended_at', shift.opened_at)
@@ -3814,11 +3814,48 @@ async function viewCurrentShiftDetails() {
     const totals = await getShiftTotals(currentShift);
     const openedStr = new Date(currentShift.opened_at).toLocaleString(currentLang === 'ar' ? 'ar-EG' : 'en-US');
     const activeDevicesHtml = await buildActiveDevicesDetailsHtml();
+    const closedSessionsHtml = buildClosedSessionsHtml(totals);
     const extraRows = `
         <div class="list-row"><div class="row-title">${t('وقت الفتح', 'Opened At')}</div><div class="row-value mono">${openedStr}</div></div>
         <div class="list-row"><div class="row-title">${t('أجهزة لسه شغالة', 'Active Devices')}</div><div class="row-value mono">${Object.keys(sessions).length}</div></div>`;
-    document.getElementById('shiftDetailsSummary').innerHTML = buildShiftBreakdownHtml(totals, extraRows) + activeDevicesHtml;
+    document.getElementById('shiftDetailsSummary').innerHTML = buildShiftBreakdownHtml(totals, extraRows) + activeDevicesHtml + closedSessionsHtml;
     openSheet('shiftDetailsOverlay');
+}
+
+// بناء قسم "الجلسات اللي اتقفلت في هذا الشيفت" — بيانات قراءة فقط
+// (session رايح بيها amount/payment_method/station_id/started_at/ended_at
+// اللي بترجع أصلاً من getShiftTotals، فمفيش أي استعلام إضافي هنا)
+function buildClosedSessionsHtml(totals) {
+    const sectionTitle = `<div class="section-title" style="margin:14px 0 6px;">${t('الجلسات المقفولة في هذا الشيفت', 'Closed Sessions This Shift')}</div>`;
+    const closedSessions = (totals.sessions || []).slice().sort((a, b) => new Date(b.ended_at) - new Date(a.ended_at));
+
+    if (closedSessions.length === 0) {
+        return `${sectionTitle}<div class="empty" style="padding:10px 0;">${t('لا يوجد جلسات اتقفلت في هذا الشيفت لحد دلوقتي', 'No sessions have been closed this shift yet')}</div>`;
+    }
+
+    let html = sectionTitle;
+    closedSessions.forEach(s => {
+        const station = stations.find(st => st.id === s.station_id);
+        const deviceName = station ? (station.name || (t('جهاز', 'Device') + ' ' + station.number)) : t('جهاز محذوف', 'Deleted device');
+        const startedStr = s.started_at ? new Date(s.started_at).toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—';
+        const endedStr = s.ended_at ? new Date(s.ended_at).toLocaleTimeString(currentLang === 'ar' ? 'ar-EG' : 'en-US') : '—';
+        const pm = paymentMethods.find(p => p.id === s.payment_method);
+        const pmName = pm ? pm.name : (s.payment_method || t('غير محدد', 'Unspecified'));
+
+        html += `
+            <div class="list-row" style="flex-direction:column;align-items:stretch;padding:10px 4px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;justify-content:space-between;width:100%;margin-bottom:4px;">
+                    <div class="row-title" style="font-weight:700;">${escapeHtml(deviceName)}</div>
+                    <div class="row-value mono">${money(s.amount)}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;width:100%;font-size:12px;color:var(--text-dim);">
+                    <span>${startedStr} → ${endedStr}</span>
+                    <span>${escapeHtml(pmName)}</span>
+                </div>
+            </div>`;
+    });
+
+    return html;
 }
 
 // بناء قسم "الأجهزة الشغالة دلوقتي" — بيانات قراءة فقط من الـ state الحالي
