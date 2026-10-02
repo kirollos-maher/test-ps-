@@ -55,6 +55,7 @@ function updateTexts() {
     renderSettingsPaymentMethods();
     if (document.getElementById('view-shift').classList.contains('active')) renderShiftView();
     if (document.getElementById('view-settings').classList.contains('active')) renderSettings();
+    if (document.getElementById('view-analytics').classList.contains('active')) renderAnalytics();
 }
 
 function updateMonthNames() {
@@ -187,6 +188,7 @@ function navigateTo(viewId) {
         if (viewId === 'view-settings' && !perms.settings) viewId = 'view-dashboard';
         if (viewId === 'view-shift' && !perms.shift) viewId = 'view-dashboard';
         if (viewId === 'view-stations' && !perms.stations) viewId = 'view-dashboard';
+        if (viewId === 'view-analytics' && !perms.analytics) viewId = 'view-dashboard';
     }
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
@@ -195,6 +197,7 @@ function navigateTo(viewId) {
     if (viewId === 'view-shift') renderShiftView();
     if (viewId === 'view-settings') { renderSettings(); renderSettingsStations(); renderSettingsPaymentMethods(); }
     if (viewId === 'view-stations') refreshStationOrdersCache().then(updateStationOrdersSummaryDOM);
+    if (viewId === 'view-analytics') renderAnalytics();
 }
 function openSheet(id) { document.getElementById(id).classList.add('show'); }
 function closeSheet(id) {
@@ -218,10 +221,12 @@ function applyPermissions() {
     const navSettings = document.querySelector('.bottom-nav .nav-btn[data-view="view-settings"]');
     const navShift = document.querySelector('.bottom-nav .nav-btn[data-view="view-shift"]');
     const navStations = document.querySelector('.bottom-nav .nav-btn[data-view="view-stations"]');
+    const navAnalytics = document.querySelector('.bottom-nav .nav-btn[data-view="view-analytics"]');
     const fab = document.getElementById('fabAddExpense');
     if (navSettings) navSettings.style.display = (isOwner || perms.settings) ? 'flex' : 'none';
     if (navShift) navShift.style.display = (isOwner || perms.shift) ? 'flex' : 'none';
     if (navStations) navStations.style.display = (isOwner || perms.stations) ? 'flex' : 'none';
+    if (navAnalytics) navAnalytics.style.display = (isOwner || perms.analytics) ? 'flex' : 'none';
     if (fab) fab.style.display = (isOwner || perms.shift) ? 'flex' : 'none';
 }
 
@@ -342,7 +347,7 @@ async function handleUnlock() {
     if (!pin) { errEl.textContent = t('اكتب الـ PIN.', 'Enter the PIN.'); return; }
 
     if (pin === business.owner_pin) {
-        currentUser = { type: 'owner', name: t('المالك', 'Owner'), permissions: { stations: true, inventory: true, shift: true, settings: true } };
+        currentUser = { type: 'owner', name: t('المالك', 'Owner'), permissions: { stations: true, inventory: true, shift: true, settings: true, analytics: true } };
         document.getElementById('lockPinInput').value = '';
         enterMainApp();
         return;
@@ -1106,6 +1111,43 @@ function formatCountdown(seconds) {
 }
 
 // ============================================================
+// ⏱️ فترة السماح + الوقت الزائد (Overtime) — عرض فقط (UI Only)
+// لا يكتب أي شيء في الداتابيز ولا يغيّر duration_seconds ولا أي معادلة مالية.
+// كل شيء محسوب لحظياً من started_at + duration_seconds + الساعة المصححة.
+//   running  : الوقت لسه متبقي            -> MM:SS تنازلي
+//   grace    : انتهى الوقت وأول 5 دقائق   -> 00:00 (ثابت + مؤشر انتهاء)
+//   overtime : بعد فترة السماح           -> +MM:SS تصاعدي (إجمالي الوقت الزائد من 00:00)
+// ============================================================
+const OVERTIME_GRACE_SECONDS = 300; // 5 دقائق
+
+function getCountdownDisplay(segment) {
+    if (!segment || segment.timer_type !== 'countdown' || !segment.duration_seconds) {
+        return { phase: 'none', text: '00:00', remaining: 0, overtime: 0 };
+    }
+    const elapsed = (new Date(nowCorrected()) - new Date(segment.started_at)) / 1000;
+    const remaining = Math.max(0, segment.duration_seconds - elapsed);
+    if (remaining > 0) {
+        return { phase: 'running', text: formatCountdown(remaining), remaining, overtime: 0 };
+    }
+    const overtime = elapsed - segment.duration_seconds;
+    if (overtime <= OVERTIME_GRACE_SECONDS) {
+        return { phase: 'grace', text: '00:00', remaining: 0, overtime };
+    }
+    return { phase: 'overtime', text: '+' + formatCountdown(overtime), remaining: 0, overtime };
+}
+
+// يحدّث نص التايمر وألوانه حسب المرحلة، ويرجّع بيانات المرحلة
+function applyCountdownTimerUI(el, segment) {
+    const d = getCountdownDisplay(segment);
+    el.textContent = d.text;
+    el.classList.add('countdown');
+    el.classList.toggle('countdown-warning', d.phase === 'running' && d.remaining < 300);
+    el.classList.toggle('countdown-expired', d.phase === 'grace');
+    el.classList.toggle('countup-overtime', d.phase === 'overtime');
+    return d;
+}
+
+// ============================================================
 // REALTIME
 // ============================================================
 function subscribeRealtime() {
@@ -1188,17 +1230,10 @@ function startTicker() {
             if (!session) return;
             const activeSeg = getActiveSegmentFast(session.id);
             if (activeSeg && activeSeg.timer_type === 'countdown' && activeSeg.duration_seconds) {
-                const remaining = getRemainingSeconds(activeSeg);
-                el.textContent = formatCountdown(remaining);
-                if (remaining < 300) {
-                    el.classList.add('countdown-warning');
-                } else {
-                    el.classList.remove('countdown-warning');
-                }
-                el.classList.add('countdown');
+                applyCountdownTimerUI(el, activeSeg);
             } else {
                 el.textContent = formatElapsed(new Date(el.dataset.start));
-                el.classList.remove('countdown', 'countdown-warning');
+                el.classList.remove('countdown', 'countdown-warning', 'countdown-expired', 'countup-overtime');
             }
         });
 
@@ -1208,17 +1243,16 @@ function startTicker() {
             if (session) {
                 const activeSeg = getActiveSegmentFast(session.id);
                 if (activeSeg && activeSeg.timer_type === 'countdown' && activeSeg.duration_seconds) {
-                    const remaining = getRemainingSeconds(activeSeg);
-                    timerEl.textContent = formatCountdown(remaining);
-                    if (remaining < 300) {
-                        timerEl.classList.add('countdown-warning');
-                    } else {
-                        timerEl.classList.remove('countdown-warning');
+                    const d = applyCountdownTimerUI(timerEl, activeSeg);
+                    const lbl = document.getElementById('activeSessionTimerLabel');
+                    if (lbl) {
+                        lbl.textContent = d.phase === 'overtime'
+                            ? t('وقت زائد (Overtime)', 'Overtime')
+                            : (d.phase === 'grace' ? t('انتهى الوقت — فترة سماح', 'Time up — grace period') : t('الوقت المتبقي', 'Time Remaining'));
                     }
-                    timerEl.classList.add('countdown');
                 } else {
                     timerEl.textContent = formatElapsed(new Date(timerEl.dataset.start));
-                    timerEl.classList.remove('countdown', 'countdown-warning');
+                    timerEl.classList.remove('countdown', 'countdown-warning', 'countdown-expired', 'countup-overtime');
                 }
             }
         }
@@ -1229,8 +1263,7 @@ function startTicker() {
             if (session) {
                 const activeSeg = getActiveSegmentFast(session.id);
                 if (activeSeg && activeSeg.timer_type === 'countdown' && activeSeg.duration_seconds) {
-                    const remaining = getRemainingSeconds(activeSeg);
-                    currentSegTimer.textContent = formatCountdown(remaining);
+                    currentSegTimer.textContent = getCountdownDisplay(activeSeg).text;
                 } else {
                     currentSegTimer.textContent = formatElapsed(new Date(currentSegTimer.dataset.start));
                 }
@@ -2066,9 +2099,8 @@ async function confirmTransfer() {
 
             if (timerType === 'countdown' && activeSeg.duration_seconds) {
                 // ✅ الوقت المتبقي يفضل زي ما هو، بيكمل العد من نفس النقطة بالسعر الجديد
-                usedSeconds = Math.min(usedSeconds, activeSeg.duration_seconds);
-                hours = usedSeconds / 3600;
-                amount = Math.round((hours * Number(activeSeg.rate)) * 100) / 100;
+                // المبلغ يشمل أي وقت زائد؛ والمدة المتبقية للجزء الجديد = max(0, المحدد - المستخدم)
+                amount = Math.round((usedSeconds / 3600 * Number(activeSeg.rate)) * 100) / 100;
                 durationSeconds = Math.max(0, Math.round((activeSeg.duration_seconds || 0) - usedSeconds));
             }
 
@@ -2396,8 +2428,8 @@ async function openStationSheet(stationId) {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
             <div class="stat-card" style="padding:10px;">
-                <div class="stat-label" style="font-size:10px;">${isCountdown ? t('الوقت المتبقي', 'Time Remaining') : t('إجمالي الجلسة', 'Total Session')}</div>
-                <div class="station-timer mono ${isCountdown ? 'countdown' : ''}" style="font-size:22px;" id="activeSessionTimer" data-start="${session.started_at}" data-station-id="${stationId}">${isCountdown ? formatCountdown(getRemainingSeconds(activeSeg)) : formatElapsed(new Date(session.started_at))}</div>
+                <div class="stat-label" id="activeSessionTimerLabel" style="font-size:10px;">${isCountdown ? t('الوقت المتبقي', 'Time Remaining') : t('إجمالي الجلسة', 'Total Session')}</div>
+                <div class="station-timer mono ${isCountdown ? 'countdown' : ''}" style="font-size:22px;" id="activeSessionTimer" data-start="${session.started_at}" data-station-id="${stationId}">${isCountdown ? getCountdownDisplay(activeSeg).text : formatElapsed(new Date(session.started_at))}</div>
             </div>
             <div class="stat-card" style="padding:10px;border-color:${currentMode === 'single' ? 'var(--amber-dim)' : 'var(--teal-dim)'};">
                 <div class="stat-label" style="font-size:10px;">${t('الجزء الحالي', 'Current Segment')}</div>
@@ -2805,7 +2837,7 @@ function showExtendOrEndOptions(stationId, session, activeSeg) {
     // حساب إجمالي الجلسة حتى الآن
     const start = new Date(activeSeg.started_at);
     const now = new Date(nowCorrected());
-    const elapsedSeconds = Math.min((now - start) / 1000, activeSeg.duration_seconds || 0);
+    const elapsedSeconds = Math.max(0, (now - start) / 1000); // يشمل الوقت الزائد
     const hoursUsed = elapsedSeconds / 3600;
     const currentAmount = Math.round((hoursUsed * Number(activeSeg.rate)) * 100) / 100;
     
@@ -2856,7 +2888,7 @@ function showExtendTimeSheet(stationId) {
     // حساب الوقت المستخدم حتى الآن
     const start = new Date(activeSeg.started_at);
     const now = new Date(nowCorrected());
-    const elapsedSeconds = Math.min((now - start) / 1000, activeSeg.duration_seconds || 0);
+    const elapsedSeconds = Math.max(0, (now - start) / 1000); // يشمل الوقت الزائد
     const hoursUsed = elapsedSeconds / 3600;
     const currentAmount = Math.round((hoursUsed * Number(activeSeg.rate)) * 100) / 100;
     
@@ -2931,7 +2963,7 @@ async function confirmExtendTime(stationId) {
         // ✅ 1. نحسب الوقت المستخدم حتى الآن في الجزء الحالي
         const start = new Date(activeSeg.started_at);
         const now = new Date(nowCorrected());
-        const elapsedSeconds = Math.min((now - start) / 1000, activeSeg.duration_seconds || 0);
+        const elapsedSeconds = (now - start) / 1000; // ✅ يشمل الوقت الزائد لو التمديد جه بعد الانتهاء
         const hoursUsed = elapsedSeconds / 3600;
         const currentAmount = Math.round((hoursUsed * Number(activeSeg.rate)) * 100) / 100;
         
@@ -2985,7 +3017,8 @@ async function proceedToEndSession(stationId, sessionParam) {
             
             if (activeSeg.timer_type === 'countdown' && activeSeg.duration_seconds) {
                 const elapsedSeconds = (new Date(now) - start) / 1000;
-                const usedSeconds = Math.min(elapsedSeconds, activeSeg.duration_seconds);
+                // ✅ الوقت المحدد + أي وقت زائد (Overtime) بنفس التعريفة — بدون قص عند المدة المحددة
+                const usedSeconds = elapsedSeconds;
                 hours = usedSeconds / 3600;
                 amount = Math.round((hours * Number(activeSeg.rate)) * 100) / 100;
             }
@@ -3231,7 +3264,8 @@ async function confirmEndSessionWithPayment() {
             
             if (activeSeg.timer_type === 'countdown' && activeSeg.duration_seconds) {
                 const elapsedSeconds = (new Date(now) - start) / 1000;
-                const usedSeconds = Math.min(elapsedSeconds, activeSeg.duration_seconds);
+                // ✅ الوقت المحدد + أي وقت زائد (Overtime) بنفس التعريفة — بدون قص عند المدة المحددة
+                const usedSeconds = elapsedSeconds;
                 hours = usedSeconds / 3600;
                 amount = Math.round((hours * Number(activeSeg.rate)) * 100) / 100;
             }
@@ -4094,7 +4128,10 @@ async function buildActiveDevicesDetailsHtml() {
 
         let timeInfo = '—';
         if (activeSeg && activeSeg.timer_type === 'countdown') {
-            timeInfo = `${t('متبقي', 'Remaining')}: ${formatCountdown(getRemainingSeconds(activeSeg))}`;
+            const cd = getCountdownDisplay(activeSeg);
+            timeInfo = cd.phase === 'overtime'
+                ? `${t('وقت زائد', 'Overtime')}: ${cd.text}`
+                : `${t('متبقي', 'Remaining')}: ${cd.text}`;
         } else if (activeSeg) {
             const elapsedSeconds = Math.max(0, (new Date(nowCorrected()) - new Date(activeSeg.started_at)) / 1000);
             timeInfo = `${t('منقضي', 'Elapsed')}: ${formatCountdown(elapsedSeconds)}`;
@@ -4600,6 +4637,7 @@ function openEmployeeSheet() {
     document.getElementById('employeeError').textContent = '';
     document.getElementById('permStations').checked = true;
     document.getElementById('permShift').checked = false;
+    document.getElementById('permAnalytics').checked = false;
     document.getElementById('permSettings').checked = false;
     openSheet('employeeOverlay');
 }
@@ -4610,6 +4648,7 @@ async function submitEmployee() {
     const permissions = {
         stations: document.getElementById('permStations').checked,
         shift: document.getElementById('permShift').checked,
+        analytics: document.getElementById('permAnalytics').checked,
         settings: document.getElementById('permSettings').checked
     };
     const { data, error } = await supabaseClient.from('employees').insert({ business_id: business.id, name, pin, permissions }).select();
@@ -4735,8 +4774,8 @@ async function refreshStationSheetContent(stationId) {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
             <div class="stat-card" style="padding:10px;">
-                <div class="stat-label" style="font-size:10px;">${isCountdown ? t('الوقت المتبقي', 'Time Remaining') : t('إجمالي الجلسة', 'Total Session')}</div>
-                <div class="station-timer mono ${isCountdown ? 'countdown' : ''}" style="font-size:22px;" id="activeSessionTimer" data-start="${session.started_at}" data-station-id="${stationId}">${isCountdown ? formatCountdown(getRemainingSeconds(activeSeg)) : formatElapsed(new Date(session.started_at))}</div>
+                <div class="stat-label" id="activeSessionTimerLabel" style="font-size:10px;">${isCountdown ? t('الوقت المتبقي', 'Time Remaining') : t('إجمالي الجلسة', 'Total Session')}</div>
+                <div class="station-timer mono ${isCountdown ? 'countdown' : ''}" style="font-size:22px;" id="activeSessionTimer" data-start="${session.started_at}" data-station-id="${stationId}">${isCountdown ? getCountdownDisplay(activeSeg).text : formatElapsed(new Date(session.started_at))}</div>
             </div>
             <div class="stat-card" style="padding:10px;border-color:${currentMode === 'single' ? 'var(--amber-dim)' : 'var(--teal-dim)'};">
                 <div class="stat-label" style="font-size:10px;">${t('الجزء الحالي', 'Current Segment')}</div>
