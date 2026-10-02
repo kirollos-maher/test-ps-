@@ -152,6 +152,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .station-timer { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--teal); }
 .station-timer.countdown { color: var(--amber); }
 .station-timer.countdown-warning { color: var(--red); animation: blinkWarning 1s infinite; }
+.station-timer.countdown-expired { color: var(--red); animation: blinkWarning 1s infinite; } /* 00:00 + فترة السماح */
+.station-timer.countup-overtime { color: var(--red); animation: none; }                       /* +MM:SS وقت زائد */
 @keyframes blinkWarning { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 .station-rate { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); margin-top: auto; }
 .station-mode-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 700; display: inline-block; }
@@ -1074,4 +1076,61 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
         font-size: 11px;
         margin: 12px 0 6px;
     }
+}
+/* ============================================================
+   ANALYTICS VIEW — كروت وتشارتات الإحصائيات
+   ============================================================ */
+.analytics-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+
+.chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 4px;
+}
+
+/* AI insight / anomaly rows */
+.insight-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--border);
+    border-right: 3px solid var(--border-strong);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.insight-row:last-child { border-bottom: none; }
+.insight-row .insight-icon { font-size: 15px; flex: 0 0 auto; }
+.insight-row.tone-green { border-right-color: var(--green); }
+.insight-row.tone-red { border-right-color: var(--red); }
+.insight-row.tone-amber { border-right-color: var(--amber); }
+.insight-row.tone-teal { border-right-color: var(--teal); }
+.insight-row.tone-purple { border-right-color: var(--purple); }
+
+/* Bar rows (device usage, top items, best days) */
+.bar-row { margin-bottom: 12px; }
+.bar-row:last-child { margin-bottom: 0; }
+.bar-row .bar-row-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12.5px;
+    margin-bottom: 5px;
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.bar-track { background: var(--bg-sunken); border-radius: 6px; height: 10px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 6px; background: var(--amber); transition: width 0.4s var(--ease); }
+.bar-fill.teal { background: var(--teal); }
+
+/* Donut charts */
+.donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 6px 0; }
+.donut-legend { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; font-size: 12px; color: var(--text-dim); }
+.donut-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-inline-end: 5px; vertical-align: middle; }
+
+@media (max-width: 400px) {
+    .analytics-tabs { flex-wrap: wrap; }
+    .chart-card { padding: 12px; }
 }
